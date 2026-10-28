@@ -35,6 +35,7 @@ from evalscope.api.model import (
     TopLogprob,
 )
 from evalscope.api.tool import ToolChoice, ToolInfo
+from evalscope.models.utils.tool_call_text import parse_tool_calls_from_text
 from evalscope.utils.model_utils import get_device
 
 logger = getLogger()
@@ -214,11 +215,24 @@ class ModelScopeAPI(ModelAPI):
                 )
 
             # construct choice
-            # TODO: Handle tool calls
+            # Parse tool calls from the decoded text when tools were advertised.
+            # Local models render tools into the chat template but emit tool calls
+            # inline in the generation (Qwen/Hermes convention); without this the
+            # downstream function-calling benchmarks read empty tool_calls and a
+            # non-tool_calls stop_reason, scoring a silent 0. See #1908.
+            tool_calls = None
+            content_text = response.output
+            if tools:
+                tool_calls, content_text = parse_tool_calls_from_text(response.output, tools)
             choice = ChatCompletionChoice(
-                message=ChatMessageAssistant(content=response.output, model=self.model_name, source='generate'),
+                message=ChatMessageAssistant(
+                    content=content_text,
+                    model=self.model_name,
+                    source='generate',
+                    tool_calls=tool_calls,
+                ),
                 logprobs=(Logprobs(content=final_logprobs) if final_logprobs is not None else None),
-                stop_reason=response.stop_reason,
+                stop_reason='tool_calls' if tool_calls else response.stop_reason,
             )
             choices.append(choice)
 
